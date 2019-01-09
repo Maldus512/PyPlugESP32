@@ -1,5 +1,5 @@
-# This is your main script.
 import machine
+
 
 def connect():
     import network
@@ -20,6 +20,7 @@ def accessPoint():
     sta_if.active(False)
     ap_if.active(True)
 
+
 def pipeCommunication():
     import usocket as socket
     import uselect as select
@@ -30,12 +31,12 @@ def pipeCommunication():
     s.bind(('', '8888'))
     s.listen(1)
 
-    while 1:
-    #wait to accept a connection - blocking call
+    while True:
+        # wait to accept a connection - blocking call
         conn, addr = s.accept()
-        conn.settimeout(0.01) #10 ms
+        conn.settimeout(0.01)  # 10 ms
         print("connection accepted!")
-        while 1:
+        while True:
             try:
                 data = conn.recv(256)
                 if not data:
@@ -52,8 +53,6 @@ def pipeCommunication():
         print("connection closed")
 
 
-
-
 def main():
     accessPoint()
     if machine.wake_reason() == machine.PIN_WAKE:
@@ -63,7 +62,7 @@ def main():
     p1 = machine.Pin(4)
     p1.init()
 
-    p1.irq(trigger = machine.Pin.WAKE_HIGH, wake = machine.DEEPSLEEP)
+    p1.irq(trigger=machine.Pin.WAKE_HIGH, wake=machine.DEEPSLEEP)
 
     print("Commencing pipeline")
     pipeCommunication()
