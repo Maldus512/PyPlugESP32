@@ -3,3 +3,6 @@ build
 Makefile
 sdkconfig*
 .env
+
+.micropythonrc
+.vscode/
