@@ -1,21 +1,26 @@
+from time import sleep
+
+import _thread
 import machine
 
+acceptedCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'ATREAD', 'ATSTATE']
 
-def connect(ssid, psw):
+
+def setStation(ssid, psw):
     '''Set ESP in Station mode. Parameters are network SSID and password.'''
 
     import network
     sta_if = network.WLAN(network.STA_IF)
     if not sta_if.isconnected():
-        print('connecting to network...')
+        print('Connecting to network...')
         sta_if.active(True)
         sta_if.connect(ssid, psw)
         while not sta_if.isconnected():
             pass
-    print('network config:', sta_if.ifconfig())
+    print('Network config: {}'.format(sta_if.ifconfig()))
 
 
-def setAccessPoint():
+def setAP():
     '''Set ESP in AccesPoint mode. The network name is something like ESP_XXXXXX.'''
 
     import network
@@ -25,63 +30,68 @@ def setAccessPoint():
     ap_if.active(True)
 
 
-def pipeCommunication():
-    '''Start pipelining commands to the micro-controller. Accepted commands are:
-- ATON: turn relay on
-- ATOFF: turn relay off
-- ATPRINT: print status informations (every second)
-- ATZERO: reset energy consumption counter
-- ATRESET: reset any counter
-- ATPOWER: get actual power consumption
-- ATREAD: get actual current consumption
-- ATSTATE: get relay status (0/1)'''
-
-    print("Starting pipeline")
-
-    import usocket as socket
-    import uselect as select
+def getFromUart(command):
+    '''Write a command to the UART bus and return the result value.Accepted commands are:
+    - ATON: turn relay on
+    - ATOFF: turn relay off
+    - ATPRINT: print status informations (every second)
+    - ATZERO: reset energy consumption counter
+    - ATRESET: reset any counter
+    - ATPOWER: get actual power consumption
+    - ATREAD: get actual current consumption
+    - ATSTATE: get relay status (0/1)'''
 
     uart = machine.UART(1, baudrate=9600, rx=16, tx=17, timeout=10)
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(('', '8888'))
-    s.listen(1)
+    uart.write(command)
+
+    # FIXME: this is required in order to wait for uart.write to complete, but it is horrible
+    sleep(0.1)  # 100 ms
+
+    uart.write(command)
+    res = uart.read()
+    if res is None:
+        print("Timeout?")
+
+    return res
+
+
+def onClientConnect(conn):
+    '''Handle the operations executed by a client. The only parameter is the connection object created by the socket connection.'''
 
     try:
-        while True:
-            # wait to accept a connection - blocking call
-            conn, addr = s.accept()
-            conn.settimeout(0.01)  # 10 ms
-            print("Connection accepted")
+        data = conn.recv(256)
+        if not data:
+            return
 
-            while True:
-                try:
-                    data = conn.recv(256)
-                    if not data:
-                        break
-                    uart.write(data)
-                except OSError:
-                    pass
-
-                data = uart.read()
-                if data:
-                    conn.send(data)
-
+        printableData = data.decode("utf-8").replace('\n', '')
+        if printableData not in acceptedCommands:
+            print("Unknown command '{}' received".format(printableData))
             conn.close()
-            print("Connection closed")
-    except BaseException:
-        s.close()
-        print("Terminating")
+            return
+
+        print("Received command '{}'".format(printableData))
+
+    except OSError:
+        pass
+
+    res = getFromUart(data)
+    print(res)
+    if res:
+        conn.send(res)
+
+    conn.close()
+    print('Connection closed')
 
 
 def setWakeCondition():
     '''Set wake conditions. Currently:
-- microcontroller is woken up from deep sleep when pin 4 is high.'''
+    - microcontroller is woken up from deep sleep when pin 4 is high.'''
 
     if machine.wake_reason() == machine.PIN_WAKE:
-        print("Woken up")
+        print('Woken up')
     else:
-        print("Hello, world!")
+        print('Hello, world!')
 
     wake_pin = machine.Pin(4)
     wake_pin.init()
@@ -90,6 +100,27 @@ def setWakeCondition():
 
 
 def main():
-    setAccessPoint()
+    setAP()
     setWakeCondition()
-    pipeCommunication()
+
+    print('Starting')
+
+    import usocket as socket
+    import uselect as select
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(('', '8888'))
+    s.listen(5)
+
+    try:
+        while True:
+            # wait to accept a connection - blocking call
+            conn, addr = s.accept()
+            conn.settimeout(0.01)  # 10 ms
+            print('Connection accepted from {}'.format(addr))
+            _thread.start_new_thread(onClientConnect, (conn,))
+    except BaseException:
+        pass
+    finally:
+        s.close()
+        print('Terminating')
