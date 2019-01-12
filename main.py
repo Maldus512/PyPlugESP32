@@ -1,7 +1,9 @@
-from time import sleep
+from time import sleep, time
 
 import _thread
 import machine
+
+READ_TIMEOUT = 1  # seconds
 
 acceptedCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'ATREAD', 'ATSTATE']
 
@@ -30,8 +32,8 @@ def setAP():
     ap_if.active(True)
 
 
-def getFromUart(command):
-    '''Write a command to the UART bus and return the result value.Accepted commands are:
+def getFromUart(command, ignoreEcho=False):
+    '''Write a command to the UART bus and return the result value. Accepted commands are:
     - ATON: turn relay on
     - ATOFF: turn relay off
     - ATPRINT: print status informations (every second)
@@ -45,13 +47,26 @@ def getFromUart(command):
 
     uart.write(command)
 
-    # FIXME: this is required in order to wait for uart.write to complete, but it is horrible
-    sleep(0.1)  # 100 ms
+    # sleep(0.005)
 
-    uart.write(command)
-    res = uart.read()
-    if res is None:
-        print("Timeout?")
+    res = bytes()
+    startTime = time()  # timeout for the loop below
+    while '\n\r' not in res.decode('utf-8'):
+        toAppend = uart.read()
+
+        if toAppend:
+            if res != b'':
+                res += toAppend
+            else:
+                res = toAppend
+
+        if time() - startTime >= READ_TIMEOUT:
+            print('ERROR: read timeout')
+            return str.encode('ERROR\nread timeout\n\r')
+
+    if ignoreEcho:
+        tempRes = res.decode('utf-8')
+        res = tempRes[tempRes.index('\n') + 1:].encode()
 
     return res
 
@@ -59,24 +74,20 @@ def getFromUart(command):
 def onClientConnect(conn):
     '''Handle the operations executed by a client. The only parameter is the connection object created by the socket connection.'''
 
-    try:
-        data = conn.recv(256)
-        if not data:
-            return
+    data = conn.recv(256)
+    if not data:
+        return
 
-        printableData = data.decode("utf-8").replace('\n', '')
-        if printableData not in acceptedCommands:
-            print("Unknown command '{}' received".format(printableData))
-            conn.close()
-            return
+    printableData = data.decode('utf-8').replace('\n', '')
+    if printableData not in acceptedCommands:
+        print("Unknown command '{}' received".format(printableData))
+        conn.close()
+        return
 
-        print("Received command '{}'".format(printableData))
+    print("Received command '{}'".format(printableData))
 
-    except OSError:
-        pass
-
-    res = getFromUart(data)
-    print(res)
+    res = getFromUart(data, ignoreEcho=True)
+    print('Result: {}'.format(res))
     if res:
         conn.send(res)
 
@@ -109,6 +120,7 @@ def main():
     import uselect as select
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('', '8888'))
     s.listen(5)
 
