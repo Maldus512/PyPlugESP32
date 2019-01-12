@@ -58,7 +58,7 @@ def getFromUart(command, ignoreEcho=False):
             else:
                 res = toAppend
 
-        if time() - startTime >= READ_TIMEOUT:
+        if time() - startTime > READ_TIMEOUT:
             print('ERROR: read timeout')
             return b'ERROR\nread timeout\n\r'
 
