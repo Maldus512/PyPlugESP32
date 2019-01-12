@@ -47,11 +47,9 @@ def getFromUart(command, ignoreEcho=False):
 
     uart.write(command)
 
-    # sleep(0.005)
-
     res = bytes()
     startTime = time()  # timeout for the loop below
-    while '\n\r' not in res.decode('utf-8'):
+    while b'\n\r' not in res:
         toAppend = uart.read()
 
         if toAppend:
@@ -62,7 +60,7 @@ def getFromUart(command, ignoreEcho=False):
 
         if time() - startTime >= READ_TIMEOUT:
             print('ERROR: read timeout')
-            return str.encode('ERROR\nread timeout\n\r')
+            return b'ERROR\nread timeout\n\r'
 
     if ignoreEcho:
         tempRes = res.decode('utf-8')
