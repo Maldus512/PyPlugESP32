@@ -64,7 +64,7 @@ def getFromUart(command, ignoreEcho=False):
 
     if ignoreEcho:
         tempRes = res.decode('utf-8')
-        res = tempRes[tempRes.index('\n') + 1:].encode()
+        res = tempRes[tempRes.index('\n') + 1:].replace('\n', '').replace('\r', '').encode()
 
     return res
 
