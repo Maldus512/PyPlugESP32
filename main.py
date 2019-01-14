@@ -32,16 +32,18 @@ def setAP():
     ap_if.active(True)
 
 
-def getFromUart(command, ignoreEcho=False):
+def getFromUart(command):
     '''Write a command to the UART bus and return the result value. Accepted commands are:
-    - ATON: turn relay on
-    - ATOFF: turn relay off
-    - ATPRINT: print status informations (every second)
-    - ATZERO: reset energy consumption counter
-    - ATRESET: reset any counter
-    - ATPOWER: get actual power consumption
-    - ATREAD: get actual current consumption
-    - ATSTATE: get relay status (0/1)'''
+    - `ATON`: turn relay on
+    - `ATOFF`: turn relay off
+    - `ATPRINT`: print status informations (every second)
+    - `ATZERO`: reset energy consumption counter
+    - `ATRESET`: reset any counter
+    - `ATPOWER`: get actual power consumption
+    - `ATREAD`: get actual current consumption
+    - `ATSTATE`: get relay status (0/1)
+
+    Since `uart.read()` is non-blocking, '\\n' is expected as terminating character.'''
 
     uart = machine.UART(1, baudrate=9600, rx=16, tx=17, timeout=10)
 
@@ -49,7 +51,7 @@ def getFromUart(command, ignoreEcho=False):
 
     res = bytes()
     startTime = time()  # timeout for the loop below
-    while b'\n\r' not in res:
+    while b'\n' not in res:
         toAppend = uart.read()
 
         if toAppend:
@@ -60,11 +62,9 @@ def getFromUart(command, ignoreEcho=False):
 
         if time() - startTime > READ_TIMEOUT:
             print('ERROR: read timeout')
-            return b'ERROR\nread timeout\n\r'
+            return b'ERROR: read timeout'
 
-    if ignoreEcho:
-        tempRes = res.decode('utf-8')
-        res = tempRes[tempRes.index('\n') + 1:].replace('\n', '').replace('\r', '').encode()
+    res = res.decode('utf-8').replace('\n', '').encode()
 
     return res
 
@@ -84,7 +84,7 @@ def onClientConnect(conn):
 
     print("Received command '{}'".format(printableData))
 
-    res = getFromUart(data, ignoreEcho=True)
+    res = getFromUart(data)
     print('Result: {}'.format(res))
     if res:
         conn.send(res)
@@ -95,7 +95,7 @@ def onClientConnect(conn):
 
 def setWakeCondition():
     '''Set wake conditions. Currently:
-    - microcontroller is woken up from deep sleep when pin 4 is high.'''
+    - microcontroller is woken up from deep sleep when pin `4` is high.'''
 
     if machine.wake_reason() == machine.PIN_WAKE:
         print('Woken up')
