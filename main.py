@@ -139,12 +139,12 @@ def main():
             conn, addr = s.accept()
             conn.settimeout(0.01)  # 10 ms
             print('Connection accepted from {}'.format(addr))
-            try:
-                _thread.start_new_thread(onClientConnect, (conn,))
-            except RuntimeError:
-                print('Failed to create new thread. Too many? ({})'.format(_thread._count()))
-    except BaseException as e:
-        print(str(e))
-    finally:
+            _thread.start_new_thread(onClientConnect, (conn,))
+    except KeyboardInterrupt:
         s.close()
         print('Terminating')
+    except BaseException as e:
+        print(str(e))
+        s.close()
+        print('Rebooting')
+        machine.reset()
