@@ -5,7 +5,7 @@ import machine
 
 READ_TIMEOUT = 1  # seconds
 
-acceptedCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'ATREAD', 'ATSTATE']
+acceptedCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'ATREAD', 'ATSTATE'] + ['ATALL']
 
 
 def setStation(ssid, psw):
@@ -72,25 +72,36 @@ def getFromUart(command):
 def onClientConnect(conn):
     '''Handle the operations executed by a client. The only parameter is the connection object created by the socket connection.'''
 
-    data = conn.recv(256)
-    if not data:
-        return
+    try:
+        data = conn.recv(256)
+        if not data:
+            return
 
-    printableData = data.decode('utf-8').replace('\n', '')
-    if printableData not in acceptedCommands:
-        print("Unknown command '{}' received".format(printableData))
+        printableData = data.decode('utf-8').replace('\n', '')
+        if printableData not in acceptedCommands:
+            print("Unknown command '{}' received".format(printableData))
+            conn.close()
+            return
+
+        print("Received command '{}'".format(printableData))
+
+        # pre-process special commands
+        if printableData == 'ATALL':
+            state = getFromUart(b'ATSTATE\n')
+            current = getFromUart(b'ATREAD\n')
+            power = getFromUart(b'ATPOWER\n')
+            res = state + b',' + current + b',' + power
+        else:
+            res = getFromUart(data)
+
+        print('Result: {}'.format(res))
+        if res:
+            conn.send(res)
+    except OSError:
+        print('Catched \'OSError')
+    finally:
         conn.close()
-        return
-
-    print("Received command '{}'".format(printableData))
-
-    res = getFromUart(data)
-    print('Result: {}'.format(res))
-    if res:
-        conn.send(res)
-
-    conn.close()
-    print('Connection closed')
+        print('Connection closed')
 
 
 def setWakeCondition():
@@ -128,9 +139,12 @@ def main():
             conn, addr = s.accept()
             conn.settimeout(0.01)  # 10 ms
             print('Connection accepted from {}'.format(addr))
-            _thread.start_new_thread(onClientConnect, (conn,))
-    except BaseException:
-        pass
+            try:
+                _thread.start_new_thread(onClientConnect, (conn,))
+            except RuntimeError:
+                print('Failed to create new thread. Too many? ({})'.format(_thread._count()))
+    except BaseException as e:
+        print(str(e))
     finally:
         s.close()
         print('Terminating')
