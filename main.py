@@ -24,8 +24,8 @@ def setStation(ssid, psw):
         startTime = time()  # timeout for the loop below
         while not sta_if.isconnected():
             if time() - startTime > CONNECTION_TIMEOUT:
-                print('Timeout while connecting to network \'{}\'. Setting AP mode.'.format(ssid))
-                setAP()
+                print('Timeout while connecting to network \'{}\'.'.format(ssid))
+                sta_if.active(False)
                 return
 
     print('Network config: {}'.format(sta_if.ifconfig()))
@@ -81,7 +81,10 @@ def getFromUart(command):
 def onClientConnect(conn):
     '''Handle the operations executed by a client. The only parameter is the connection object created by the socket connection.'''
 
+    reset = False
+
     try:
+
         data = conn.recv(256)
         if not data:
             return
@@ -103,9 +106,11 @@ def onClientConnect(conn):
             with open('network_cfg.py', 'w') as f:
                 f.write('ssid = \'{}\'\npsw = \'{}\''.format(ssid, psw))
                 print('Stored ssid and password')
+                reset = True
                 return
         elif printableData not in acceptedCommands:
             print("Unknown command '{}'".format(printableData))
+
             return
         else:
             res = getFromUart(data)
@@ -121,6 +126,10 @@ def onClientConnect(conn):
         conn.close()
         print('Connection closed')
 
+        if reset:
+            print('Rebooting')
+            machine.reset()
+
 
 def setWakeCondition():
     '''Set wake conditions. Currently:
@@ -129,7 +138,7 @@ def setWakeCondition():
     if machine.wake_reason() == machine.PIN_WAKE:
         print('Woken up')
     else:
-        print('Hello, world!')
+        print('Starting')
 
     wake_pin = machine.Pin(4)
     wake_pin.init()
@@ -138,17 +147,15 @@ def setWakeCondition():
 
 
 def main():
+    setAP()
+
     try:
         from network_cfg import ssid, psw
-        # FIXME: remember to change this
-        # setStation(ssid, psw)
-        setAP()
+        setStation(ssid, psw)
     except ImportError:
-        setAP()
+        pass
 
     setWakeCondition()
-
-    print('Starting')
 
     import usocket as socket
     import uselect as select
@@ -157,6 +164,8 @@ def main():
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('', '8888'))
     s.listen(5)
+
+    print('Ready')
 
     try:
         while True:
