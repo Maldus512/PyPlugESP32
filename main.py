@@ -4,12 +4,21 @@ import _thread
 import machine
 
 READ_TIMEOUT = 1  # seconds
-CONNECTION_TIMEOUT = 10  # seconds
+CONNECTION_TIMEOUT = 5  # seconds
+
+SSID = ''
+PSW = ''
+
+reset = False
 
 acceptedCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'ATREAD', 'ATSTATE'] + ['ATALL']
 
 
-def setStation(ssid, psw):
+class ResetException(Exception):
+    pass
+
+
+def setStation():
     '''Set ESP in Station mode. Parameters are network SSID and password.'''
 
     import network
@@ -17,14 +26,14 @@ def setStation(ssid, psw):
     sta_if = network.WLAN(network.STA_IF)
 
     if not sta_if.isconnected():
-        print('Connecting to network...')
+        print('Connecting to \'{}\'...'.format(SSID))
         sta_if.active(True)
-        sta_if.connect(ssid, psw)
+        sta_if.connect(SSID, PSW)
 
         startTime = time()  # timeout for the loop below
         while not sta_if.isconnected():
             if time() - startTime > CONNECTION_TIMEOUT:
-                print('Timeout while connecting to network \'{}\'.'.format(ssid))
+                print('Timeout while connecting to network \'{}\'.'.format(SSID))
                 sta_if.active(False)
                 return
 
@@ -81,6 +90,7 @@ def getFromUart(command):
 def onClientConnect(conn):
     '''Handle the operations executed by a client. The only parameter is the connection object created by the socket connection.'''
 
+    global reset
     reset = False
 
     try:
@@ -99,24 +109,26 @@ def onClientConnect(conn):
             current = getFromUart(b'ATREAD\n')
             power = getFromUart(b'ATPOWER\n')
             res = state + b',' + current + b',' + power
+
         elif printableData.startswith('ATNET'):
             temp = printableData.split(',')
             ssid = temp[1]
             psw = temp[2]
-            with open('network_cfg.py', 'w') as f:
-                f.write('ssid = \'{}\'\npsw = \'{}\''.format(ssid, psw))
-                print('Stored ssid and password')
-                reset = True
-                return
+            if ssid != SSID or psw != PSW:
+                with open('network_cfg.py', 'w') as f:
+                    f.write('ssid = \'{}\'\npsw = \'{}\''.format(ssid, psw))
+                    print('Stored ssid and password')
+                    reset = True
+            res = b'ok'
+
         elif printableData not in acceptedCommands:
             print("Unknown command '{}'".format(printableData))
 
-            return
         else:
             res = getFromUart(data)
 
-        print('Result: {}'.format(res))
         if res:
+            print('Result: {}'.format(res))
             conn.send(res)
     except OSError:
         print('Catched \'OSError')
@@ -125,10 +137,6 @@ def onClientConnect(conn):
     finally:
         conn.close()
         print('Connection closed')
-
-        if reset:
-            print('Rebooting')
-            machine.reset()
 
 
 def setWakeCondition():
@@ -151,7 +159,10 @@ def main():
 
     try:
         from network_cfg import ssid, psw
-        setStation(ssid, psw)
+        global SSID, PSW
+        SSID = ssid
+        PSW = psw
+        setStation()
     except ImportError:
         pass
 
@@ -164,21 +175,35 @@ def main():
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('', '8888'))
     s.listen(5)
+    s.settimeout(1)  # accept() timeout
 
     print('Ready')
 
+    global reset
+
     try:
         while True:
-            # wait to accept a connection - blocking call
-            conn, addr = s.accept()
+            if reset:
+                raise ResetException
+
+            try:
+                # wait to accept a connection - blocking call, but only waits 1 second
+                conn, addr = s.accept()
+            except OSError:
+                # timeout error (and others, but for now it's alright (TODO))
+                continue
+
             conn.settimeout(0.01)  # 10 ms
             print('Connection accepted from {}'.format(addr))
             _thread.start_new_thread(onClientConnect, (conn,))
     except KeyboardInterrupt:
         s.close()
         print('Terminating')
+    except ResetException:
+        pass
     except BaseException as e:
         print(str(e))
+    finally:
         s.close()
         print('Rebooting')
         machine.reset()
