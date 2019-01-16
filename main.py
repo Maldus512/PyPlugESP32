@@ -4,6 +4,7 @@ import _thread
 import machine
 
 READ_TIMEOUT = 1  # seconds
+CONNECTION_TIMEOUT = 10  # seconds
 
 acceptedCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'ATREAD', 'ATSTATE'] + ['ATALL']
 
@@ -12,13 +13,21 @@ def setStation(ssid, psw):
     '''Set ESP in Station mode. Parameters are network SSID and password.'''
 
     import network
+
     sta_if = network.WLAN(network.STA_IF)
+
     if not sta_if.isconnected():
         print('Connecting to network...')
         sta_if.active(True)
         sta_if.connect(ssid, psw)
+
+        startTime = time()  # timeout for the loop below
         while not sta_if.isconnected():
-            pass
+            if time() - startTime > CONNECTION_TIMEOUT:
+                print('Timeout while connecting to network \'{}\'. Setting AP mode.'.format(ssid))
+                setAP()
+                return
+
     print('Network config: {}'.format(sta_if.ifconfig()))
 
 
@@ -78,10 +87,6 @@ def onClientConnect(conn):
             return
 
         printableData = data.decode('utf-8').replace('\n', '')
-        if printableData not in acceptedCommands:
-            print("Unknown command '{}' received".format(printableData))
-            conn.close()
-            return
 
         print("Received command '{}'".format(printableData))
 
@@ -91,6 +96,17 @@ def onClientConnect(conn):
             current = getFromUart(b'ATREAD\n')
             power = getFromUart(b'ATPOWER\n')
             res = state + b',' + current + b',' + power
+        elif printableData.startswith('ATNET'):
+            temp = printableData.split(',')
+            ssid = temp[1]
+            psw = temp[2]
+            with open('network_cfg.py', 'w') as f:
+                f.write('ssid = \'{}\'\npsw = \'{}\''.format(ssid, psw))
+                print('Stored ssid and password')
+                return
+        elif printableData not in acceptedCommands:
+            print("Unknown command '{}'".format(printableData))
+            return
         else:
             res = getFromUart(data)
 
@@ -99,6 +115,8 @@ def onClientConnect(conn):
             conn.send(res)
     except OSError:
         print('Catched \'OSError')
+    except BaseException as e:
+        print(str(e))
     finally:
         conn.close()
         print('Connection closed')
@@ -120,7 +138,14 @@ def setWakeCondition():
 
 
 def main():
-    setAP()
+    try:
+        from network_cfg import ssid, psw
+        # FIXME: remember to change this
+        # setStation(ssid, psw)
+        setAP()
+    except ImportError:
+        setAP()
+
     setWakeCondition()
 
     print('Starting')
