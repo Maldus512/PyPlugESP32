@@ -1,17 +1,22 @@
-from time import sleep, time
+import time
 
 import _thread
 import machine
+import ure
 
-READ_TIMEOUT = 1  # seconds
-CONNECTION_TIMEOUT = 5  # seconds
+READ_TIMEOUT = 1000  # seconds
+CONNECTION_TIMEOUT = 5000  # milliseconds
 
 SSID = ''
 PSW = ''
 
 reset = False
+inLoop = True
+regex = None
 
-acceptedCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'ATREAD', 'ATSTATE'] + ['ATALL']
+microCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'ATREAD', 'ATSTATE']
+superCommands = ['ATALL', 'ATNET', 'ATREBOOT', 'ATREPL']
+acceptedCommands = microCommands + superCommands
 
 
 class ResetException(Exception):
@@ -30,9 +35,9 @@ def setStation():
         sta_if.active(True)
         sta_if.connect(SSID, PSW)
 
-        startTime = time()  # timeout for the loop below
+        startTime = time.ticks_ms()  # timeout for the loop below
         while not sta_if.isconnected():
-            if time() - startTime > CONNECTION_TIMEOUT:
+            if time.ticks_diff(time.ticks_ms(), startTime) > CONNECTION_TIMEOUT:
                 print('Timeout while connecting to network \'{}\'.'.format(SSID))
                 sta_if.active(False)
                 return
@@ -68,7 +73,7 @@ def getFromUart(command):
     uart.write(command)
 
     res = bytes()
-    startTime = time()  # timeout for the loop below
+    startTime = time.ticks_ms()  # timeout for the loop below
     while b'\n' not in res:
         toAppend = uart.read()
 
@@ -78,7 +83,7 @@ def getFromUart(command):
             else:
                 res = toAppend
 
-        if time() - startTime > READ_TIMEOUT:
+        if time.ticks_diff(time.ticks_ms(), startTime) > READ_TIMEOUT:
             print('ERROR: read timeout')
             return b'ERROR: read timeout'
 
@@ -90,7 +95,8 @@ def getFromUart(command):
 def onClientConnect(conn):
     '''Handle the operations executed by a client. The only parameter is the connection object created by the socket connection.'''
 
-    global reset
+    global reset, regex, inLoop
+
     reset = False
 
     try:
@@ -99,19 +105,27 @@ def onClientConnect(conn):
         if not data:
             return
 
-        printableData = data.decode('utf-8').replace('\n', '')
+        parsedData = data.decode('utf-8').replace('\n', '')
+        command = regex.match(parsedData).group(0)
+        print("Received command '{}'".format(command))
 
-        print("Received command '{}'".format(printableData))
+        res = None
 
         # pre-process special commands
-        if printableData == 'ATALL':
+        if command not in acceptedCommands:
+            print("Unknown command '{}'".format(command))
+
+        elif command in microCommands:
+            res = getFromUart(data)
+
+        elif command == 'ATALL':
             state = getFromUart(b'ATSTATE\n')
             current = getFromUart(b'ATREAD\n')
             power = getFromUart(b'ATPOWER\n')
             res = state + b',' + current + b',' + power
 
-        elif printableData.startswith('ATNET'):
-            temp = printableData.split(',')
+        elif command == 'ATNET':
+            temp = parsedData.split(',')
             ssid = temp[1]
             psw = temp[2]
             if ssid != SSID or psw != PSW:
@@ -121,11 +135,11 @@ def onClientConnect(conn):
                     reset = True
             res = b'ok'
 
-        elif printableData not in acceptedCommands:
-            print("Unknown command '{}'".format(printableData))
+        elif command == 'ATREBOOT':
+            reset = True
 
-        else:
-            res = getFromUart(data)
+        elif command == 'ATREPL':
+            inLoop = False
 
         if res:
             print('Result: {}'.format(res))
@@ -179,10 +193,12 @@ def main():
 
     print('Ready')
 
-    global reset
+    global reset, regex, inLoop
+
+    regex = ure.compile('^AT[A-Z]+')
 
     try:
-        while True:
+        while inLoop:
             if reset:
                 raise ResetException
 
@@ -205,5 +221,9 @@ def main():
         print(str(e))
     finally:
         s.close()
-        print('Rebooting')
-        machine.reset()
+
+        if inLoop:  # if True it means that the loop was not exited consciously
+            print('Rebooting')
+            machine.reset()
+        else:
+            print('Entering REPL')
