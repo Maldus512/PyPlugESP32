@@ -180,7 +180,7 @@ def onClientConnect(conn):
                 _timer['timer'].deinit()
 
             else:  # 'GET', and anything else (also malformed ATTIMER commands)
-                res = b'{},{}'.format(_timer['triggerTicks'], _timer['command'])
+                res = None if _timer['triggerTicks'] is None else b'{},{}'.format(_timer['triggerTicks'], _timer['command'])
 
         if res:
             print('Result: {}'.format(res))
