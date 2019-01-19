@@ -12,6 +12,8 @@ CONNECTION_TIMEOUT = 5000  # milliseconds
 SSID = ''
 PSW = ''
 
+UUID = None
+
 reset = False
 inLoop = True
 regex = None
@@ -186,6 +188,18 @@ def onClientConnect(conn):
         print('Connection closed')
 
 
+def generateUUID():
+    randomString = ''
+    chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    uuid_format = [8, 4, 4, 4, 12]
+    for n in uuid_format:
+        for i in range(0, n):
+            randomString += str(chars[r.randint(0, len(chars) - 1)])
+        if n != 12:
+            randomString += '-'
+    return randomString
+
+
 def setWakeCondition():
     '''Set wake conditions. Currently:
     - microcontroller is woken up from deep sleep when pin `4` is high.'''
@@ -203,6 +217,18 @@ def setWakeCondition():
 
 def main():
     setAP()
+
+    global UUID
+    try:
+        from uuid_cfg import uuid as _uuid
+        UUID = _uuid
+    except ImportError:
+        UUID = generateUUID()
+        with open('uuid_cfg.py', 'w') as f:
+            f.write('uuid = \'{}\'\n'.format(UUID))
+        print('Warning: Generated new UUID.')
+
+    print('UUID: {}'.format(UUID))
 
     try:
         from network_cfg import ssid, psw
