@@ -9,11 +9,12 @@ from ujson import dump
 READ_TIMEOUT = 1000  # seconds
 CONNECTION_TIMEOUT = 5000  # milliseconds
 
-SSID = ''
-PSW = ''
+SSID = None
+PSW = None
 
 UUID = None
 
+mustUpdateNetwork = False
 reset = False
 inLoop = True
 regex = None
@@ -22,9 +23,9 @@ microCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'AT
 superCommands = ['ATALL', 'ATNET', 'ATREBOOT', 'ATREPL', 'ATTIMER']
 acceptedCommands = microCommands + superCommands
 
-timer = {
-    'command': '',
-    'triggerTimestamp': '',
+_timer = {
+    'command': None,
+    'triggerTicks': None,
     'timer': machine.Timer(-1)
 }
 
@@ -105,9 +106,7 @@ def getFromUart(command):
 def onClientConnect(conn):
     '''Handle the operations executed by a client. The only parameter is the connection object created by the socket connection.'''
 
-    global reset, regex, inLoop
-
-    reset = False
+    global regex
 
     try:
 
@@ -138,54 +137,81 @@ def onClientConnect(conn):
             temp = parsedData.split(',')
             ssid = temp[1]
             psw = temp[2]
+            global SSID, PSW
             if ssid != SSID or psw != PSW:
                 with open('network_cfg.py', 'w') as f:
                     f.write('ssid = \'{}\'\npsw = \'{}\''.format(ssid, psw))
+                    SSID = ssid
+                    PSW = psw
                     print('Stored ssid = {} and password = {}'.format(ssid, psw))
-                    reset = True
+                    mustUpdateNetwork = True
 
         elif command == 'ATREBOOT':
+            global reset
             reset = True
 
         elif command == 'ATREPL':
+            global inLoop
             inLoop = False
 
-        elif command == 'ATTIMER':  # 'ATTIMER,SET/DEL/GET,triggerTimestamp,command
+        elif command == 'ATTIMER':  # 'ATTIMER,SET/DEL/GET,triggerTicks(seconds),command(ATON/ATOFF)
+            global _timer
+
             temp = parsedData.split(',')
             request = temp[1]
             if request == 'SET':
-                timer['triggerTimestamp'] = temp[2]
-                timer['command'] = temp[3]
+                _timer['triggerTicks'] = int(temp[2])
+                _timer['command'] = temp[3]
 
-                timer['timer'].deinit()
+                if _timer['command'] not in ['ATON', 'ATOFF']:
+                    print('Error: wrong timer command')
+                    return
 
-                # period = timer['triggerTimestamp'] -
+                _timer['timer'].deinit()
 
-                # calcola il tempo
-                # controlla che non sia gia passato
-                # setta il timer come one_shot
-
-                # timer['timer'].init(period=)
+                # Set a one-second periodic timer which counts the specified 'triggerTicks'. This
+                # is a workaround for always knowing the remaining seconds without using an internet
+                # connection for determining the actual calendar date/time.
+                _timer['timer'].init(period=1000, mode=machine.Timer.PERIODIC, callback=handleTimerInterrupt)
 
             elif request == 'DEL':
-                timer = {
-                    'command': '',
-                    'triggerTimestamp': '',
-                    'a': Timer(0)
-                }
-            else:  # 'GET' and anything else (malformed commands too)
-                res = b'{},{}'.format(timer['triggerTimestamp'])
+                _timer['command'] = None
+                _timer['triggerTicks'] = None
+                _timer['timer'].deinit()
+
+            else:  # 'GET', and anything else (also malformed ATTIMER commands)
+                res = b'{},{}'.format(_timer['triggerTicks'], _timer['command'])
 
         if res:
             print('Result: {}'.format(res))
             conn.send(res)
-    except OSError:
-        print('Catched \'OSError')
+    except OSError as e:
+        print('### Catched \'OSError. {}'.format(e))
     except BaseException as e:
-        print(str(e))
+        print('### {}'.format(e))
     finally:
         conn.close()
         print('Connection closed')
+
+
+def handleTimerInterrupt(timer):
+    global _timer
+
+    if _timer['triggerTicks'] > 0:
+        _timer['triggerTicks'] -= 1
+        return
+
+    print('Timer expired')
+
+    if _timer['timer'] is not timer:
+        print('Error: inconsistent timers')
+        return
+
+    _ = getFromUart((_timer['command'] + '\n').encode())
+
+    _timer['command'] = None
+    _timer['triggerTicks'] = None
+    _timer['timer'].deinit()
 
 
 def generateUUID():
@@ -218,7 +244,8 @@ def setWakeCondition():
 def main():
     setAP()
 
-    global UUID
+    global UUID, _timer, reset, regex, inLoop, mustUpdateNetwork
+
     try:
         from uuid_cfg import uuid as _uuid
         UUID = _uuid
@@ -252,14 +279,15 @@ def main():
 
     print('Ready')
 
-    global reset, regex, inLoop
-
     regex = ure.compile('^AT[A-Z]+')
 
-    try:
-        while inLoop:
+    while inLoop:
+        try:
             if reset:
                 raise ResetException
+            if mustUpdateNetwork:
+                mustUpdateNetwork = False
+                setStation()
 
             try:
                 # wait to accept a connection - blocking call, but only waits 1 second
@@ -271,18 +299,19 @@ def main():
             conn.settimeout(0.01)  # 10 ms
             print('Connection accepted from {}'.format(addr))
             _thread.start_new_thread(onClientConnect, (conn,))
-    except KeyboardInterrupt:
-        s.close()
-        print('Terminating')
-    except ResetException:
-        pass
-    except BaseException as e:
-        print(str(e))
-    finally:
-        s.close()
-
-        if inLoop:  # if True it means that the loop was not exited consciously
+        except KeyboardInterrupt:
+            s.close()
+            _timer['timer'].deinit()
+            print('Terminating')
+            break
+        except ResetException:
+            s.close()
+            _timer['timer'].deinit()
             print('Rebooting')
             machine.reset()
-        else:
-            print('Entering REPL')
+        except BaseException as e:
+            print('### {}'.format(e))
+
+    s.close()
+    _timer['timer'].deinit()
+    print('Entering REPL')
