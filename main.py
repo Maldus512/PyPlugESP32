@@ -1,8 +1,10 @@
+import random as r
 import time
 
 import _thread
 import machine
 import ure
+from ujson import dump
 
 READ_TIMEOUT = 1000  # seconds
 CONNECTION_TIMEOUT = 5000  # milliseconds
@@ -15,8 +17,14 @@ inLoop = True
 regex = None
 
 microCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'ATREAD', 'ATSTATE']
-superCommands = ['ATALL', 'ATNET', 'ATREBOOT', 'ATREPL']
+superCommands = ['ATALL', 'ATNET', 'ATREBOOT', 'ATREPL', 'ATTIMER']
 acceptedCommands = microCommands + superCommands
+
+timer = {
+    'command': '',
+    'triggerTimestamp': '',
+    'timer': machine.Timer(-1)
+}
 
 
 class ResetException(Exception):
@@ -124,22 +132,47 @@ def onClientConnect(conn):
             power = getFromUart(b'ATPOWER\n')
             res = state + b',' + current + b',' + power
 
-        elif command == 'ATNET':
+        elif command == 'ATNET':  # 'ATNET,ssid,password'
             temp = parsedData.split(',')
             ssid = temp[1]
             psw = temp[2]
             if ssid != SSID or psw != PSW:
                 with open('network_cfg.py', 'w') as f:
                     f.write('ssid = \'{}\'\npsw = \'{}\''.format(ssid, psw))
-                    print('Stored ssid and password')
+                    print('Stored ssid = {} and password = {}'.format(ssid, psw))
                     reset = True
-            res = b'ok'
 
         elif command == 'ATREBOOT':
             reset = True
 
         elif command == 'ATREPL':
             inLoop = False
+
+        elif command == 'ATTIMER':  # 'ATTIMER,SET/DEL/GET,triggerTimestamp,command
+            temp = parsedData.split(',')
+            request = temp[1]
+            if request == 'SET':
+                timer['triggerTimestamp'] = temp[2]
+                timer['command'] = temp[3]
+
+                timer['timer'].deinit()
+
+                # period = timer['triggerTimestamp'] -
+
+                # calcola il tempo
+                # controlla che non sia gia passato
+                # setta il timer come one_shot
+
+                # timer['timer'].init(period=)
+
+            elif request == 'DEL':
+                timer = {
+                    'command': '',
+                    'triggerTimestamp': '',
+                    'a': Timer(0)
+                }
+            else:  # 'GET' and anything else (malformed commands too)
+                res = b'{},{}'.format(timer['triggerTimestamp'])
 
         if res:
             print('Result: {}'.format(res))
