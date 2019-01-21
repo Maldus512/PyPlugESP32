@@ -159,6 +159,7 @@ def onClientConnect(conn):
 
             temp = parsedData.split(',')
             request = temp[1]
+            print('Request: {}'.format(request))
             if request == 'SET':
                 _timer['triggerTicks'] = int(temp[2])
                 _timer['command'] = temp[3]
@@ -196,6 +197,10 @@ def onClientConnect(conn):
 
 def handleTimerInterrupt(timer):
     global _timer
+
+    if _timer['command'] is None or _timer['triggerTicks'] is None:
+        # this is necessary since, after calling '_timer['timer'].deinit()', the timer will still be called once
+        return
 
     if _timer['triggerTicks'] > 0:
         _timer['triggerTicks'] -= 1
