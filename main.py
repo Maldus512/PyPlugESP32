@@ -25,7 +25,7 @@ acceptedCommands = microCommands + superCommands
 
 _timer = {
     'command': None,
-    'triggerTicks': None,
+    'triggerTicks': -1,
     'timer': machine.Timer(-1)
 }
 
@@ -103,6 +103,15 @@ def getFromUart(command):
     return res
 
 
+def timerGET():
+    # return None if _timer['triggerTicks'] is None else b'{},{}'.format(_timer['triggerTicks'], _timer['command'])
+    return str(_timer['triggerTicks']).encode() + b',' + str(_timer['command']).encode()
+
+
+def networkGET():
+    return str(SSID).encode() + b',' + str(PSW).encode()
+
+
 def onClientConnect(conn):
     '''Handle the operations executed by a client. The only parameter is the connection object created by the socket connection.'''
 
@@ -128,23 +137,30 @@ def onClientConnect(conn):
             res = getFromUart(data)
 
         elif command == 'ATALL':
-            state = getFromUart(b'ATSTATE\n')
-            current = getFromUart(b'ATREAD\n')
-            power = getFromUart(b'ATPOWER\n')
-            res = state + b',' + current + b',' + power
+            state = getFromUart(b'ATSTATE\n')  # 0
+            current = getFromUart(b'ATREAD\n')  # 1
+            power = getFromUart(b'ATPOWER\n')  # 2
+            timer = timerGET()  # 3 (seconds), 4 (command)
+            network = networkGET()  # 5 (ssid), 6 (password)
 
-        elif command == 'ATNET':  # 'ATNET,ssid,password'
+            res = state + b',' + current + b',' + power + b',' + timer + b',' + network
+
+        elif command == 'ATNET':  # 'ATNET,SET/GET,ssid,password'
             temp = parsedData.split(',')
-            ssid = temp[1]
-            psw = temp[2]
-            global SSID, PSW
-            if ssid != SSID or psw != PSW:
-                with open('network_cfg.py', 'w') as f:
-                    f.write('ssid = \'{}\'\npsw = \'{}\''.format(ssid, psw))
-                    SSID = ssid
-                    PSW = psw
-                    print('Stored ssid = {} and password = {}'.format(ssid, psw))
-                    mustUpdateNetwork = True
+            request = temp[1]
+            if request == 'SET':
+                ssid = temp[2]
+                psw = temp[3]
+                global SSID, PSW
+                if ssid != SSID or psw != PSW:
+                    with open('network_cfg.py', 'w') as f:
+                        f.write('ssid = \'{}\'\npsw = \'{}\''.format(ssid, psw))
+                        SSID = ssid
+                        PSW = psw
+                        print('Stored ssid = {} and password = {}'.format(ssid, psw))
+                        mustUpdateNetwork = True
+            else:
+                res = networkGET()
 
         elif command == 'ATREBOOT':
             global reset
@@ -177,11 +193,11 @@ def onClientConnect(conn):
 
             elif request == 'DEL':
                 _timer['command'] = None
-                _timer['triggerTicks'] = None
+                _timer['triggerTicks'] = -1
                 _timer['timer'].deinit()
 
             else:  # 'GET', and anything else (also malformed ATTIMER commands)
-                res = None if _timer['triggerTicks'] is None else b'{},{}'.format(_timer['triggerTicks'], _timer['command'])
+                res = timerGET()
 
         if res:
             print('Result: {}'.format(res))
@@ -198,7 +214,7 @@ def onClientConnect(conn):
 def handleTimerInterrupt(timer):
     global _timer
 
-    if _timer['command'] is None or _timer['triggerTicks'] is None:
+    if _timer['command'] is None or _timer['triggerTicks'] == -1:
         # this is necessary since, after calling '_timer['timer'].deinit()', the timer will still be called once
         return
 
@@ -215,7 +231,7 @@ def handleTimerInterrupt(timer):
     _ = getFromUart((_timer['command'] + '\n').encode())
 
     _timer['command'] = None
-    _timer['triggerTicks'] = None
+    _timer['triggerTicks'] = -1
     _timer['timer'].deinit()
 
 
