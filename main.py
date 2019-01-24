@@ -3,11 +3,17 @@ import time
 
 import _thread
 import machine
+import network
+import ubinascii
 import ure
+import usocket as socket
 from ujson import dump
 
 READ_TIMEOUT = 1000  # seconds
-CONNECTION_TIMEOUT = 5000  # milliseconds
+CONNECTION_TIMEOUT = 10000  # milliseconds
+
+UDP_PORT = 8889
+TCP_PORT = 8888
 
 SSID = None
 PSW = None
@@ -34,10 +40,8 @@ class ResetException(Exception):
     pass
 
 
-def setStation():
+def setStation(socketUDP):
     '''Set ESP in Station mode. Parameters are network SSID and password.'''
-
-    import network
 
     sta_if = network.WLAN(network.STA_IF)
 
@@ -53,7 +57,9 @@ def setStation():
                 sta_if.active(False)
                 return
 
-    print('Network config: {}'.format(sta_if.ifconfig()))
+    print('STA config: {}'.format(sta_if.ifconfig()))
+
+    _thread.start_new_thread(listenUDP, (socketUDP,))
 
 
 def setAP():
@@ -64,6 +70,8 @@ def setAP():
     sta_if = network.WLAN(network.STA_IF)
     sta_if.active(False)
     ap_if.active(True)
+    ap_if.ifconfig()
+    print('AP config: {}'.format(sta_if.ifconfig()))
 
 
 def getFromUart(command):
@@ -151,7 +159,7 @@ def onClientConnect(conn):
             if request == 'SET':
                 ssid = temp[2]
                 psw = temp[3]
-                global SSID, PSW
+                global SSID, PSW, mustUpdateNetwork
                 if ssid != SSID or psw != PSW:
                     with open('network_cfg.py', 'w') as f:
                         f.write('ssid = \'{}\'\npsw = \'{}\''.format(ssid, psw))
@@ -262,6 +270,41 @@ def setWakeCondition():
     wake_pin.irq(trigger=machine.Pin.WAKE_HIGH, wake=machine.DEEPSLEEP)
 
 
+def listenUDP(s):
+    print('Started listening for UDP broadcasts.')
+
+    global inLoop
+
+    while inLoop:
+        try:
+            if reset:
+                break
+
+            try:
+                # wait to accept a connection - blocking call, but only waits 1 second
+                msg, addr = s.recvfrom(1024)
+
+                msg_s = msg.decode()
+
+                print('[UDP] Received \'{}\' from \'{}\''.format(msg_s, addr))
+
+                if msg_s == 'ATLOOKUP':
+                    sta_if = network.WLAN(network.STA_IF)
+                    s.sendto('SOCKET,{},'.format(sta_if.ifconfig()[0]).encode() + ubinascii.hexlify(network.WLAN().config('mac'), ':'), addr)
+                else:
+                    print('[UDP] Ignored message \'{}\''.format(msg_s))
+
+            except OSError:
+                # timeout error (and others, but for now it's alright (TODO))
+                continue
+
+        except KeyboardInterrupt:
+            inLoop = False
+            break
+        except BaseException as e:
+            print('### [UDP] {}'.format(e))
+
+
 def main():
     setAP()
 
@@ -278,25 +321,26 @@ def main():
 
     print('UUID: {}'.format(UUID))
 
+    socketUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # UDP
+    socketUDP.bind(('', UDP_PORT))
+    socketUDP.settimeout(1)  # accept() timeout
+
     try:
         from network_cfg import ssid, psw
         global SSID, PSW
         SSID = ssid
         PSW = psw
-        setStation()
+        setStation(socketUDP)
     except ImportError:
         pass
 
     setWakeCondition()
 
-    import usocket as socket
-    import uselect as select
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(('', '8888'))
-    s.listen(5)
-    s.settimeout(1)  # accept() timeout
+    socketTCP = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # TCP
+    socketTCP.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    socketTCP.bind(('', TCP_PORT))
+    socketTCP.listen(5)
+    socketTCP.settimeout(1)  # accept() timeout
 
     print('Ready')
 
@@ -308,11 +352,11 @@ def main():
                 raise ResetException
             if mustUpdateNetwork:
                 mustUpdateNetwork = False
-                setStation()
+                setStation(socketUDP)
 
             try:
                 # wait to accept a connection - blocking call, but only waits 1 second
-                conn, addr = s.accept()
+                conn, addr = socketTCP.accept()
             except OSError:
                 # timeout error (and others, but for now it's alright (TODO))
                 continue
@@ -321,18 +365,21 @@ def main():
             print('Connection accepted from {}'.format(addr))
             _thread.start_new_thread(onClientConnect, (conn,))
         except KeyboardInterrupt:
-            s.close()
+            socketTCP.close()
+            socketUDP.close()
             _timer['timer'].deinit()
             print('Terminating')
             break
         except ResetException:
-            s.close()
+            socketTCP.close()
+            socketUDP.close()
             _timer['timer'].deinit()
             print('Rebooting')
             machine.reset()
         except BaseException as e:
             print('### {}'.format(e))
 
-    s.close()
+    socketTCP.close()
+    socketUDP.close()
     _timer['timer'].deinit()
     print('Entering REPL')
