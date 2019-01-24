@@ -290,7 +290,7 @@ def listenUDP(s):
 
                 if msg_s == 'ATLOOKUP':
                     sta_if = network.WLAN(network.STA_IF)
-                    s.sendto('SOCKET,{},'.format(sta_if.ifconfig()[0]).encode() + ubinascii.hexlify(network.WLAN().config('mac'), ':'), addr)
+                    s.sendto('SOCKET,{},'.format(sta_if.ifconfig()[0]).encode() + ubinascii.hexlify(network.WLAN().config('mac'), ':') + ',{}'.format(str(TCP_PORT)).encode(), addr)
                 else:
                     print('[UDP] Ignored message \'{}\''.format(msg_s))
 
