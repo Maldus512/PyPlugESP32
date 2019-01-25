@@ -44,6 +44,7 @@ def setStation():
     '''Set ESP in Station mode. Parameters are network SSID and password.'''
 
     sta_if = network.WLAN(network.STA_IF)
+    sta_if.active(False)
 
     if not sta_if.isconnected():
         print('Connecting to \'{}\'...'.format(SSID))
@@ -59,6 +60,7 @@ def setStation():
                 setAP()
                 return False
 
+    print('Connected to \'{}\''.format(SSID))
     print('STA config: {}'.format(sta_if.ifconfig()))
 
     print('Disabling AP.')
@@ -72,6 +74,7 @@ def setAP(disableStation=False):
     '''Set ESP in AccesPoint mode. The network name is something like ESP_XXXXXX.'''
 
     ap_if = network.WLAN(network.AP_IF)
+    ap_if.active(False)
     if disableStation:
         sta_if = network.WLAN(network.STA_IF)
         sta_if.active(False)
@@ -345,11 +348,13 @@ def main():
         global SSID, PSW
         SSID = ssid
         PSW = psw
-        if setStation():
-            _thread.start_new_thread(listenUDP, (socketUDP,))
+        setStation()
     except ImportError:
         sta_if = network.WLAN(network.STA_IF)
         sta_if.active(False)
+        setAP()
+
+    _thread.start_new_thread(listenUDP, (socketUDP,))
 
     setWakeCondition()
 
@@ -369,7 +374,8 @@ def main():
                 raise ResetException
             if mustUpdateNetwork:
                 mustUpdateNetwork = False
-                setStation(socketUDP)
+                setStation()
+                raise ResetException
 
             try:
                 # wait to accept a connection - blocking call, but only waits 1 second
