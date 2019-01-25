@@ -9,7 +9,7 @@ import ure
 import usocket as socket
 from ujson import dump
 
-READ_TIMEOUT = 1000  # seconds
+READ_TIMEOUT = 1000  # milliseconds
 CONNECTION_TIMEOUT = 10000  # milliseconds
 
 UDP_PORT = 8889
@@ -40,7 +40,7 @@ class ResetException(Exception):
     pass
 
 
-def setStation(socketUDP):
+def setStation():
     '''Set ESP in Station mode. Parameters are network SSID and password.'''
 
     sta_if = network.WLAN(network.STA_IF)
@@ -55,15 +55,17 @@ def setStation(socketUDP):
             if time.ticks_diff(time.ticks_ms(), startTime) > CONNECTION_TIMEOUT:
                 print('Timeout while connecting to network \'{}\'.'.format(SSID))
                 sta_if.active(False)
+                print('Enabling AP.')
                 setAP()
-                return
+                return False
 
     print('STA config: {}'.format(sta_if.ifconfig()))
 
+    print('Disabling AP.')
     ap_if = network.WLAN(network.AP_IF)
     ap_if.active(False)
 
-    _thread.start_new_thread(listenUDP, (socketUDP,))
+    return True
 
 
 def setAP(disableStation=False):
@@ -116,7 +118,6 @@ def getFromUart(command):
 
 
 def timerGET():
-    # return None if _timer['triggerTicks'] is None else b'{},{}'.format(_timer['triggerTicks'], _timer['command'])
     return str(_timer['triggerTicks']).encode() + b',' + str(_timer['command']).encode()
 
 
@@ -141,10 +142,10 @@ def onClientConnect(conn):
 
         res = None
 
-        # pre-process special commands
         if command not in acceptedCommands:
             print("Unknown command '{}'".format(command))
 
+        # pre-process special commands
         elif command in microCommands:
             res = getFromUart(data)
 
@@ -157,7 +158,7 @@ def onClientConnect(conn):
 
             res = state + b',' + current + b',' + power + b',' + timer + b',' + network
 
-        elif command == 'ATNET':  # 'ATNET,SET/GET,ssid,password'
+        elif command == 'ATNET':  # 'ATNET,GET/SET,ssid,password'
             temp = parsedData.split(',')
             request = temp[1]
             if request == 'SET':
@@ -175,14 +176,16 @@ def onClientConnect(conn):
                 res = networkGET()
 
         elif command == 'ATREBOOT':
-            global reset
-            reset = True
+            with _thread.allocate_lock():
+                global reset
+                reset = True
 
         elif command == 'ATREPL':
-            global inLoop
-            inLoop = False
+            with _thread.allocate_lock():
+                global inLoop
+                inLoop = False
 
-        elif command == 'ATTIMER':  # 'ATTIMER,SET/DEL/GET,triggerTicks(seconds),command(ATON/ATOFF)
+        elif command == 'ATTIMER':  # 'ATTIMER,GET/DEL/SEC,triggerTicks(in seconds),command(ATON/ATOFF)
             global _timer
 
             temp = parsedData.split(',')
@@ -277,49 +280,49 @@ def setWakeCondition():
 def listenUDP(s):
     print('Started listening for UDP broadcasts.')
 
-    global inLoop
+    global inLoop, reset
 
     while inLoop:
-        try:
-            if reset:
-                break
-
+        with _thread.allocate_lock():
             try:
-                # wait to accept a connection - blocking call, but only waits 1 second
-                msg, addr = s.recvfrom(1024)
+                if reset:
+                    break
 
-                msg_s = msg.decode()
+                try:
+                    # wait to accept a connection - blocking call, but only waits 1 second
+                    msg, addr = s.recvfrom(1024)
 
-                print('[UDP] Received \'{}\' from \'{}\''.format(msg_s, addr))
+                    msg_s = msg.decode()
 
-                if msg_s == 'ATLOOKUP':
-                    sta_if = network.WLAN(network.STA_IF)
+                    print('[UDP] Received \'{}\' from \'{}\''.format(msg_s, addr))
 
-                    deviceAddress = ''
-                    if sta_if.isconnected():
-                        deviceAddress = sta_if.ifconfig()[0]
+                    if msg_s == 'ATLOOKUP':
+                        sta_if = network.WLAN(network.STA_IF)
+
+                        deviceAddress = ''
+                        if sta_if.isconnected():
+                            deviceAddress = sta_if.ifconfig()[0]
+                        else:
+                            ap_if = network.WLAN(network.AP_IF)
+                            deviceAddress = ap_if.ifconfig()[0]
+
+                        s.sendto('SOCKET,{},'.format(deviceAddress).encode() + ubinascii.hexlify(network.WLAN().config('mac'), ':') + ',{}'.format(str(TCP_PORT)).encode(), addr)
                     else:
-                        ap_if = network.WLAN(network.AP_IF)
-                        deviceAddress = ap_if.ifconfig()[0]
+                        print('[UDP] Ignored message \'{}\''.format(msg_s))
 
-                    s.sendto('SOCKET,{},'.format(deviceAddress).encode() + ubinascii.hexlify(network.WLAN().config('mac'), ':') + ',{}'.format(str(TCP_PORT)).encode(), addr)
-                else:
-                    print('[UDP] Ignored message \'{}\''.format(msg_s))
+                except OSError:
+                    # timeout error (and others, but for now it's alright (TODO))
+                    continue
 
-            except OSError:
-                # timeout error (and others, but for now it's alright (TODO))
-                continue
-
-        except KeyboardInterrupt:
-            inLoop = False
-            break
-        except BaseException as e:
-            print('### [UDP] {}'.format(e))
+            except KeyboardInterrupt:
+                with _thread.allocate_lock():
+                    inLoop = False
+                break
+            except BaseException as e:
+                print('### [UDP] {}'.format(e))
 
 
 def main():
-    setAP()
-
     global UUID, _timer, reset, regex, inLoop, mustUpdateNetwork
 
     try:
@@ -342,7 +345,8 @@ def main():
         global SSID, PSW
         SSID = ssid
         PSW = psw
-        setStation(socketUDP)
+        if setStation():
+            _thread.start_new_thread(listenUDP, (socketUDP,))
     except ImportError:
         sta_if = network.WLAN(network.STA_IF)
         sta_if.active(False)
@@ -378,21 +382,24 @@ def main():
             print('Connection accepted from {}'.format(addr))
             _thread.start_new_thread(onClientConnect, (conn,))
         except KeyboardInterrupt:
-            socketTCP.close()
-            socketUDP.close()
-            _timer['timer'].deinit()
             print('Terminating')
             break
         except ResetException:
             socketTCP.close()
+            socketTCP = None
             socketUDP.close()
+            socketUDP = None
             _timer['timer'].deinit()
             print('Rebooting')
             machine.reset()
         except BaseException as e:
             print('### {}'.format(e))
 
-    socketTCP.close()
-    socketUDP.close()
+    if socketTCP:
+        socketTCP.close()
+        socketTCP = None
+    if socketUDP:
+        socketUDP.close()
+        socketUDP = None
     _timer['timer'].deinit()
     print('Entering REPL')
