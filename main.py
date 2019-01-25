@@ -55,9 +55,13 @@ def setStation(socketUDP):
             if time.ticks_diff(time.ticks_ms(), startTime) > CONNECTION_TIMEOUT:
                 print('Timeout while connecting to network \'{}\'.'.format(SSID))
                 sta_if.active(False)
+                setAP()
                 return
 
     print('STA config: {}'.format(sta_if.ifconfig()))
+
+    ap_if = network.WLAN(network.AP_IF)
+    ap_if.active(False)
 
     _thread.start_new_thread(listenUDP, (socketUDP,))
 
