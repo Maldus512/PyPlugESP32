@@ -62,16 +62,16 @@ def setStation(socketUDP):
     _thread.start_new_thread(listenUDP, (socketUDP,))
 
 
-def setAP():
+def setAP(disableStation=False):
     '''Set ESP in AccesPoint mode. The network name is something like ESP_XXXXXX.'''
 
-    import network
     ap_if = network.WLAN(network.AP_IF)
-    sta_if = network.WLAN(network.STA_IF)
-    sta_if.active(False)
+    if disableStation:
+        sta_if = network.WLAN(network.STA_IF)
+        sta_if.active(False)
     ap_if.active(True)
     ap_if.ifconfig()
-    print('AP config: {}'.format(sta_if.ifconfig()))
+    print('AP config: {}'.format(ap_if.ifconfig()))
 
 
 def getFromUart(command):
@@ -290,7 +290,15 @@ def listenUDP(s):
 
                 if msg_s == 'ATLOOKUP':
                     sta_if = network.WLAN(network.STA_IF)
-                    s.sendto('SOCKET,{},'.format(sta_if.ifconfig()[0]).encode() + ubinascii.hexlify(network.WLAN().config('mac'), ':') + ',{}'.format(str(TCP_PORT)).encode(), addr)
+
+                    deviceAddress = ''
+                    if sta_if.isconnected():
+                        deviceAddress = sta_if.ifconfig()[0]
+                    else:
+                        ap_if = network.WLAN(network.AP_IF)
+                        deviceAddress = ap_if.ifconfig()[0]
+
+                    s.sendto('SOCKET,{},'.format(deviceAddress).encode() + ubinascii.hexlify(network.WLAN().config('mac'), ':') + ',{}'.format(str(TCP_PORT)).encode(), addr)
                 else:
                     print('[UDP] Ignored message \'{}\''.format(msg_s))
 
@@ -332,7 +340,8 @@ def main():
         PSW = psw
         setStation(socketUDP)
     except ImportError:
-        pass
+        sta_if = network.WLAN(network.STA_IF)
+        sta_if.active(False)
 
     setWakeCondition()
 
