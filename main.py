@@ -77,7 +77,7 @@ def setAP(disableStation=False):
     setActiveSecure(interface=network.AP_IF, active=False)
     if disableStation:
         setActiveSecure(interface=network.STA_IF, active=False)
-    setActiveSecure(interface=network.AP_IF, active=False)
+    setActiveSecure(interface=network.AP_IF, active=True)
     ap_if.ifconfig()
     print('AP config: {}'.format(ap_if.ifconfig()))
 
