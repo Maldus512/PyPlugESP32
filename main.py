@@ -10,7 +10,7 @@ import usocket as socket
 from ujson import dump
 
 READ_TIMEOUT = 1000  # milliseconds
-CONNECTION_TIMEOUT = 10000  # milliseconds
+CONNECTION_TIMEOUT = 15000  # milliseconds
 STATION_ACTIVE_TIMEOUT = 10000  # milliseconds
 
 UDP_PORT = 8889
