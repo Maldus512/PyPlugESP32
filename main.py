@@ -11,6 +11,7 @@ from ujson import dump
 
 READ_TIMEOUT = 1000  # milliseconds
 CONNECTION_TIMEOUT = 10000  # milliseconds
+STATION_ACTIVE_TIMEOUT = 10000  # milliseconds
 
 UDP_PORT = 8889
 TCP_PORT = 8888
@@ -44,18 +45,18 @@ def setStation():
     '''Set ESP in Station mode. Parameters are network SSID and password.'''
 
     sta_if = network.WLAN(network.STA_IF)
-    sta_if.active(False)
+    print('[setStation] active: {}, connected: {}'.format(sta_if.active(), sta_if.isconnected()))
 
     if not sta_if.isconnected():
         print('Connecting to \'{}\'...'.format(SSID))
-        sta_if.active(True)
+        setActiveSecure(interface=network.STA_IF, active=True)
         sta_if.connect(SSID, PSW)
 
         startTime = time.ticks_ms()  # timeout for the loop below
         while not sta_if.isconnected():
             if time.ticks_diff(time.ticks_ms(), startTime) > CONNECTION_TIMEOUT:
                 print('Timeout while connecting to network \'{}\'.'.format(SSID))
-                sta_if.active(False)
+                setActiveSecure(interface=network.STA_IF, active=False)
                 print('Enabling AP.')
                 setAP()
                 return False
@@ -64,8 +65,7 @@ def setStation():
     print('STA config: {}'.format(sta_if.ifconfig()))
 
     print('Disabling AP.')
-    ap_if = network.WLAN(network.AP_IF)
-    ap_if.active(False)
+    setActiveSecure(interface=network.AP_IF, active=False)
 
     return True
 
@@ -74,11 +74,10 @@ def setAP(disableStation=False):
     '''Set ESP in AccesPoint mode. The network name is something like ESP_XXXXXX.'''
 
     ap_if = network.WLAN(network.AP_IF)
-    ap_if.active(False)
+    setActiveSecure(interface=network.AP_IF, active=False)
     if disableStation:
-        sta_if = network.WLAN(network.STA_IF)
-        sta_if.active(False)
-    ap_if.active(True)
+        setActiveSecure(interface=network.STA_IF, active=False)
+    setActiveSecure(interface=network.AP_IF, active=False)
     ap_if.ifconfig()
     print('AP config: {}'.format(ap_if.ifconfig()))
 
@@ -258,7 +257,7 @@ def generateUUID():
     chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
     uuid_format = [8, 4, 4, 4, 12]
     for n in uuid_format:
-        for i in range(0, n):
+        for _ in range(0, n):
             randomString += str(chars[r.randint(0, len(chars) - 1)])
         if n != 12:
             randomString += '-'
@@ -325,6 +324,20 @@ def listenUDP(s):
                 print('### [UDP] {}'.format(e))
 
 
+def setActiveSecure(interface, active):
+    '''Sometimes the interface behaved strangely, looking like it wasn't turned off when it was supposed to, and viceversa. This is to ensure that the interface has enough time to actually being turned on/off'''
+    # FIXME: maybe there is a better way, I should investigate the problem further.
+
+    _interface = network.WLAN(interface)
+    _interface.active(active)
+    startTime = time.ticks_ms()  # timeout for the loop below
+    while _interface.active() != active:
+        if time.ticks_diff(time.ticks_ms(), startTime) > STATION_ACTIVE_TIMEOUT:
+            with _thread.allocate_lock():
+                global reset
+                reset = True
+
+
 def main():
     global UUID, _timer, reset, regex, inLoop, mustUpdateNetwork
 
@@ -343,6 +356,9 @@ def main():
     socketUDP.bind(('', UDP_PORT))
     socketUDP.settimeout(1)  # accept() timeout
 
+    setActiveSecure(interface=network.STA_IF, active=False)
+    setActiveSecure(interface=network.AP_IF, active=False)
+
     try:
         from network_cfg import ssid, psw
         global SSID, PSW
@@ -350,8 +366,7 @@ def main():
         PSW = psw
         setStation()
     except ImportError:
-        sta_if = network.WLAN(network.STA_IF)
-        sta_if.active(False)
+        setActiveSecure(interface=network.STA_IF, active=False)
         setAP()
 
     _thread.start_new_thread(listenUDP, (socketUDP,))
