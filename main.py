@@ -368,6 +368,8 @@ def main():
 
     regex = ure.compile('^AT[A-Z]+')
 
+    sta_if = network.WLAN(network.STA_IF)
+
     while inLoop:
         try:
             if reset:
@@ -376,6 +378,10 @@ def main():
                 mustUpdateNetwork = False
                 setStation()
                 raise ResetException
+
+            if sta_if.active() and not sta_if.isconnected():
+                setStation()
+                continue
 
             try:
                 # wait to accept a connection - blocking call, but only waits 1 second
