@@ -409,7 +409,7 @@ def main():
             if mustUpdateNetwork:
                 mustUpdateNetwork = False
                 resetStation()
-                raise ResetException
+                raise ResetException # TODO: not sure if this is actually necessary
 
             # for some reason, if the network to which the esp is connected is shut down, sta_if.isconnected() keeps
             # returning True. On the other hand, ifconfig() addresses are all 0.0.0.0 (except for DNS, which is the 4th)
