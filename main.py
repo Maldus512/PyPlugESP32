@@ -27,7 +27,7 @@ inLoop = True
 regex = None
 
 microCommands = ['ATON', 'ATOFF', 'ATPRINT', 'ATZERO', 'ATRESET', 'ATPOWER', 'ATREAD', 'ATSTATE']
-superCommands = ['ATALL', 'ATNET', 'ATREBOOT', 'ATREPL', 'ATTIMER']
+superCommands = ['ATALL', 'ATNET', 'ATREBOOT', 'ATREPL', 'ATTIMER', 'ATNAME']
 acceptedCommands = microCommands + superCommands
 
 _timer = {
@@ -50,11 +50,11 @@ def resetStation():
 
     setActiveSecure(interfaceType=network.STA_IF, active=True)
 
+    sta_if = network.WLAN(network.STA_IF)
     # for some reason, if the network to which the esp is connected is shut down, sta_if.isconnected() keeps
     # returning True. On the other hand, ifconfig() addresses are all 0.0.0.0 (except for DNS, which is the 4th)
     if (sta_if.active() and not sta_if.isconnected()) or (not sta_if.active() and sta_if.isconnected()) or (sta_if.isconnected() and sta_if.ifconfig()[0] == '0.0.0.0'):
         print('Connecting to \'{}\'...'.format(SSID))
-        sta_if = network.WLAN(network.STA_IF)
         sta_if.connect(SSID, PSW)
 
         startTime = time.ticks_ms()  # timeout for the loop below
@@ -195,7 +195,7 @@ def onClientConnect(conn):
                     global SSID, PSW, DEVICE_NAME
                     if device_name != DEVICE_NAME:
                         with open('cfg.py', 'w') as f:
-                            f.write('device_name = \'{}\'\nssid = \'{}\'\npsw = \'{}\''.format(DEVICE_NAME, SSID, PSW))
+                            f.write('device_name = \'{}\'\nssid = \'{}\'\npsw = \'{}\''.format(device_name, SSID, PSW))
                             print('Stored device_name = {}'.format(device_name))
             else:
                 res = DEVICE_NAME.encode()
