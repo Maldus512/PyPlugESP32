@@ -217,7 +217,7 @@ def onClientConnect(conn):
                 global inLoop
                 inLoop = False
 
-        elif command == 'ATTIMER':  # 'ATTIMER,GET/DEL/SEC,triggerTicks(in seconds),command(ATON/ATOFF)
+        elif command == 'ATTIMER':  # 'ATTIMER,GET/DEL/SET,triggerTicks(in seconds),command(ATON/ATOFF)
             global _timer
 
             temp = parsedData.split(',')
@@ -261,7 +261,7 @@ def onClientConnect(conn):
 def handleTimerInterrupt(timer):
     global _timer
 
-    if _timer['command'] is None or _timer['triggerTicks'] == -1:
+    if _timer['command'] is None or _timer['triggerTicks'] <= -1:
         # this is necessary since, after calling '_timer['timer'].deinit()', the timer will still be called once
         return
 
