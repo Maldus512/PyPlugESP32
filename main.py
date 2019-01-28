@@ -44,6 +44,12 @@ class ResetException(Exception):
 def resetStation():
     '''Set ESP in Station mode. Parameters are network SSID and password.'''
 
+    if SSID is None or SSID == '' or PSW is None or PSW == '':
+        print('Stored ssid and/or password is null.')
+        print('Enabling AP.')
+        resetAP()
+        return False
+
     # forcing both IF to close since sometimes they would fall into a dirty state
     setActiveSecure(interfaceType=network.STA_IF, active=False)
     setActiveSecure(interfaceType=network.AP_IF, active=False)
@@ -370,7 +376,7 @@ def main():
 
     try:
         from cfg import ssid, psw
-        if ssid is None or psw is None:
+        if ssid is None or ssid == '' or psw is None or psw == '':
             raise ImportError
         global SSID, PSW
         SSID = ssid
