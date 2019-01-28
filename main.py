@@ -146,7 +146,7 @@ def onClientConnect(conn):
 
         parsedData = data.decode('utf-8').replace('\n', '')
         command = regex.match(parsedData).group(0)
-        print("Received command '{}'".format(command))
+        print("Received command '{}'".format(parsedData))
 
         res = None
 
@@ -196,6 +196,7 @@ def onClientConnect(conn):
                     if device_name != DEVICE_NAME:
                         with open('cfg.py', 'w') as f:
                             f.write('device_name = \'{}\'\nssid = \'{}\'\npsw = \'{}\''.format(device_name, SSID, PSW))
+                            DEVICE_NAME = device_name
                             print('Stored device_name = {}'.format(device_name))
             else:
                 res = DEVICE_NAME.encode()
