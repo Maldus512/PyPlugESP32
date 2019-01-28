@@ -44,19 +44,24 @@ class ResetException(Exception):
 def setStation():
     '''Set ESP in Station mode. Parameters are network SSID and password.'''
 
+    setActiveSecure(interfaceType=network.AP_IF, active=False)
+    setActiveSecure(interfaceType=network.STA_IF, active=False)
+
     sta_if = network.WLAN(network.STA_IF)
     print('[setStation] active: {}, connected: {}'.format(sta_if.active(), sta_if.isconnected()))
 
-    if not sta_if.isconnected():
+    # for some reason, if the network to which the esp is connected is shut down, sta_if.isconnected() keeps
+    # returning True. On the other hand, ifconfig() addresses are all 0.0.0.0 (except for DNS, which is the 4th)
+    if not sta_if.isconnected() or (not sta_if.active() and sta_if.isconnected()) or (sta_if.isconnected() and sta_if.ifconfig()[0] == '0.0.0.0'):
         print('Connecting to \'{}\'...'.format(SSID))
-        setActiveSecure(interface=network.STA_IF, active=True)
+        setActiveSecure(interfaceType=network.STA_IF, active=True)
         sta_if.connect(SSID, PSW)
 
         startTime = time.ticks_ms()  # timeout for the loop below
         while not sta_if.isconnected():
             if time.ticks_diff(time.ticks_ms(), startTime) > CONNECTION_TIMEOUT:
                 print('Timeout while connecting to network \'{}\'.'.format(SSID))
-                setActiveSecure(interface=network.STA_IF, active=False)
+                setActiveSecure(interfaceType=network.STA_IF, active=False)
                 print('Enabling AP.')
                 setAP()
                 return False
@@ -65,19 +70,19 @@ def setStation():
     print('STA config: {}'.format(sta_if.ifconfig()))
 
     print('Disabling AP.')
-    setActiveSecure(interface=network.AP_IF, active=False)
+    setActiveSecure(interfaceType=network.AP_IF, active=False)
 
     return True
 
 
-def setAP(disableStation=False):
+def setAP():
     '''Set ESP in AccesPoint mode. The network name is something like ESP_XXXXXX.'''
 
+    setActiveSecure(interfaceType=network.AP_IF, active=False)
+    setActiveSecure(interfaceType=network.STA_IF, active=False)
+
     ap_if = network.WLAN(network.AP_IF)
-    setActiveSecure(interface=network.AP_IF, active=False)
-    if disableStation:
-        setActiveSecure(interface=network.STA_IF, active=False)
-    setActiveSecure(interface=network.AP_IF, active=True)
+    setActiveSecure(interfaceType=network.AP_IF, active=True)
     ap_if.ifconfig()
     print('AP config: {}'.format(ap_if.ifconfig()))
 
@@ -324,11 +329,11 @@ def listenUDP(s):
                 print('### [UDP] {}'.format(e))
 
 
-def setActiveSecure(interface, active):
+def setActiveSecure(interfaceType, active):
     '''Sometimes the interface behaved strangely, looking like it wasn't turned off when it was supposed to, and viceversa. This is to ensure that the interface has enough time to actually being turned on/off'''
     # FIXME: maybe there is a better way, I should investigate the problem further.
 
-    _interface = network.WLAN(interface)
+    _interface = network.WLAN(interfaceType)
     _interface.active(active)
     startTime = time.ticks_ms()  # timeout for the loop below
     while _interface.active() != active:
@@ -356,9 +361,6 @@ def main():
     socketUDP.bind(('', UDP_PORT))
     socketUDP.settimeout(1)  # accept() timeout
 
-    setActiveSecure(interface=network.STA_IF, active=False)
-    setActiveSecure(interface=network.AP_IF, active=False)
-
     try:
         from network_cfg import ssid, psw
         global SSID, PSW
@@ -366,7 +368,6 @@ def main():
         PSW = psw
         setStation()
     except ImportError:
-        setActiveSecure(interface=network.STA_IF, active=False)
         setAP()
 
     _thread.start_new_thread(listenUDP, (socketUDP,))
@@ -394,7 +395,10 @@ def main():
                 setStation()
                 raise ResetException
 
-            if sta_if.active() and not sta_if.isconnected():
+            # for some reason, if the network to which the esp is connected is shut down, sta_if.isconnected() keeps
+            # returning True. On the other hand, ifconfig() addresses are all 0.0.0.0 (except for DNS, which is the 4th)
+            if not sta_if.isconnected() or (not sta_if.active() and sta_if.isconnected()) or (sta_if.isconnected() and sta_if.ifconfig()[0] == '0.0.0.0'):
+                print('Network disconnected or inconsistent, attempting to reconnect')
                 setStation()
                 continue
 
