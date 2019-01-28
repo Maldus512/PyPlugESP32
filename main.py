@@ -19,7 +19,7 @@ TCP_PORT = 8888
 SSID = None
 PSW = None
 
-UUID = None
+DEVICE_NAME = None
 
 mustUpdateNetwork = False
 reset = False
@@ -41,20 +41,20 @@ class ResetException(Exception):
     pass
 
 
-def setStation():
+def resetStation():
     '''Set ESP in Station mode. Parameters are network SSID and password.'''
 
-    setActiveSecure(interfaceType=network.AP_IF, active=False)
+    # forcing both IF to close since sometimes they would fall into a dirty state
     setActiveSecure(interfaceType=network.STA_IF, active=False)
+    setActiveSecure(interfaceType=network.AP_IF, active=False)
 
-    sta_if = network.WLAN(network.STA_IF)
-    print('[setStation] active: {}, connected: {}'.format(sta_if.active(), sta_if.isconnected()))
+    setActiveSecure(interfaceType=network.STA_IF, active=True)
 
     # for some reason, if the network to which the esp is connected is shut down, sta_if.isconnected() keeps
     # returning True. On the other hand, ifconfig() addresses are all 0.0.0.0 (except for DNS, which is the 4th)
-    if not sta_if.isconnected() or (not sta_if.active() and sta_if.isconnected()) or (sta_if.isconnected() and sta_if.ifconfig()[0] == '0.0.0.0'):
+    if (sta_if.active() and not sta_if.isconnected()) or (not sta_if.active() and sta_if.isconnected()) or (sta_if.isconnected() and sta_if.ifconfig()[0] == '0.0.0.0'):
         print('Connecting to \'{}\'...'.format(SSID))
-        setActiveSecure(interfaceType=network.STA_IF, active=True)
+        sta_if = network.WLAN(network.STA_IF)
         sta_if.connect(SSID, PSW)
 
         startTime = time.ticks_ms()  # timeout for the loop below
@@ -63,7 +63,7 @@ def setStation():
                 print('Timeout while connecting to network \'{}\'.'.format(SSID))
                 setActiveSecure(interfaceType=network.STA_IF, active=False)
                 print('Enabling AP.')
-                setAP()
+                resetAP()
                 return False
 
     print('Connected to \'{}\''.format(SSID))
@@ -75,9 +75,10 @@ def setStation():
     return True
 
 
-def setAP():
+def resetAP():
     '''Set ESP in AccesPoint mode. The network name is something like ESP_XXXXXX.'''
 
+    # forcing both IF to close since sometimes they would fall into a dirty state
     setActiveSecure(interfaceType=network.AP_IF, active=False)
     setActiveSecure(interfaceType=network.STA_IF, active=False)
 
@@ -163,7 +164,9 @@ def onClientConnect(conn):
             timer = timerGET()  # 3 (seconds), 4 (command)
             network = networkGET()  # 5 (ssid), 6 (password)
 
-            res = state + b',' + current + b',' + power + b',' + timer + b',' + network
+            with _thread.allocate_lock():
+                global DEVICE_NAME
+                res = state + b',' + current + b',' + power + b',' + timer + b',' + network + b',' + DEVICE_NAME
 
         elif command == 'ATNET':  # 'ATNET,GET/SET,ssid,password'
             temp = parsedData.split(',')
@@ -171,16 +174,31 @@ def onClientConnect(conn):
             if request == 'SET':
                 ssid = temp[2]
                 psw = temp[3]
-                global SSID, PSW, mustUpdateNetwork
-                if ssid != SSID or psw != PSW:
-                    with open('network_cfg.py', 'w') as f:
-                        f.write('ssid = \'{}\'\npsw = \'{}\''.format(ssid, psw))
-                        SSID = ssid
-                        PSW = psw
-                        print('Stored ssid = {} and password = {}'.format(ssid, psw))
-                        mustUpdateNetwork = True
+                with _thread.allocate_lock():
+                    global SSID, PSW, mustUpdateNetwork, DEVICE_NAME
+                    if ssid != SSID or psw != PSW:
+                        with open('cfg.py', 'w') as f:
+                            f.write('device_name = \'{}\'\nssid = \'{}\'\npsw = \'{}\''.format(DEVICE_NAME, ssid, psw))
+                            SSID = ssid
+                            PSW = psw
+                            print('Stored ssid = {} and password = {}'.format(ssid, psw))
+                            mustUpdateNetwork = True
             else:
                 res = networkGET()
+
+        elif command == 'ATNAME':  # 'ATNAME,GET/SET,name'
+            temp = parsedData.split(',')
+            request = temp[1]
+            if request == 'SET':
+                device_name = temp[2]
+                with _thread.allocate_lock():
+                    global SSID, PSW, DEVICE_NAME
+                    if device_name != DEVICE_NAME:
+                        with open('cfg.py', 'w') as f:
+                            f.write('device_name = \'{}\'\nssid = \'{}\'\npsw = \'{}\''.format(DEVICE_NAME, SSID, PSW))
+                            print('Stored device_name = {}'.format(device_name))
+            else:
+                res = DEVICE_NAME.encode()
 
         elif command == 'ATREBOOT':
             with _thread.allocate_lock():
@@ -257,18 +275,6 @@ def handleTimerInterrupt(timer):
     _timer['timer'].deinit()
 
 
-def generateUUID():
-    randomString = ''
-    chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    uuid_format = [8, 4, 4, 4, 12]
-    for n in uuid_format:
-        for _ in range(0, n):
-            randomString += str(chars[r.randint(0, len(chars) - 1)])
-        if n != 12:
-            randomString += '-'
-    return randomString
-
-
 def setWakeCondition():
     '''Set wake conditions. Currently:
     - microcontroller is woken up from deep sleep when pin `4` is high.'''
@@ -313,7 +319,8 @@ def listenUDP(s):
                             ap_if = network.WLAN(network.AP_IF)
                             deviceAddress = ap_if.ifconfig()[0]
 
-                        s.sendto('SOCKET,{},'.format(deviceAddress).encode() + ubinascii.hexlify(network.WLAN().config('mac'), ':') + ',{}'.format(str(TCP_PORT)).encode(), addr)
+                        # SOCKET, address, mac address, TCP port, device name
+                        s.sendto('SOCKET,{},'.format(deviceAddress).encode() + ubinascii.hexlify(network.WLAN().config('mac'), ':') + ',{},{}'.format(str(TCP_PORT), DEVICE_NAME).encode(), addr)
                     else:
                         print('[UDP] Ignored message \'{}\''.format(msg_s))
 
@@ -344,31 +351,33 @@ def setActiveSecure(interfaceType, active):
 
 
 def main():
-    global UUID, _timer, reset, regex, inLoop, mustUpdateNetwork
+    global DEVICE_NAME, _timer, reset, regex, inLoop, mustUpdateNetwork
 
     try:
-        from uuid_cfg import uuid as _uuid
-        UUID = _uuid
+        from cfg import device_name
+        DEVICE_NAME = device_name
     except ImportError:
-        UUID = generateUUID()
-        with open('uuid_cfg.py', 'w') as f:
-            f.write('uuid = \'{}\'\n'.format(UUID))
-        print('Warning: Generated new UUID.')
+        DEVICE_NAME = 'Socket Device'
+        with open('cfg.py', 'w') as f:
+            f.write('device_name = \'{}\'\nssid = {}\npsw = {}'.format(DEVICE_NAME, None, None))
 
-    print('UUID: {}'.format(UUID))
+    print('Device name: {}'.format(DEVICE_NAME))
 
     socketUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # UDP
     socketUDP.bind(('', UDP_PORT))
     socketUDP.settimeout(1)  # accept() timeout
 
     try:
-        from network_cfg import ssid, psw
+        from cfg import ssid, psw
+        if ssid is None or psw is None:
+            raise ImportError
         global SSID, PSW
         SSID = ssid
         PSW = psw
-        setStation()
+        resetStation()
     except ImportError:
-        setAP()
+        print('No ssid or password found in \'cfg.py\'.')
+        resetAP()
 
     _thread.start_new_thread(listenUDP, (socketUDP,))
 
@@ -392,14 +401,14 @@ def main():
                 raise ResetException
             if mustUpdateNetwork:
                 mustUpdateNetwork = False
-                setStation()
+                resetStation()
                 raise ResetException
 
             # for some reason, if the network to which the esp is connected is shut down, sta_if.isconnected() keeps
             # returning True. On the other hand, ifconfig() addresses are all 0.0.0.0 (except for DNS, which is the 4th)
-            if not sta_if.isconnected() or (not sta_if.active() and sta_if.isconnected()) or (sta_if.isconnected() and sta_if.ifconfig()[0] == '0.0.0.0'):
+            if (sta_if.active() and not sta_if.isconnected()) or (not sta_if.active() and sta_if.isconnected()) or (sta_if.isconnected() and sta_if.ifconfig()[0] == '0.0.0.0'):
                 print('Network disconnected or inconsistent, attempting to reconnect')
-                setStation()
+                resetStation()
                 continue
 
             try:
